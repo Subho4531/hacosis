@@ -1,40 +1,45 @@
-// server.js
 const express = require('express');
 const { createUmi } = require('@metaplex-foundation/umi-bundle-defaults');
 const { createNft, mplTokenMetadata, TokenStandard } = require('@metaplex-foundation/mpl-token-metadata');
 const { generateSigner, createSignerFromKeypair, percentAmount, signerIdentity } = require('@metaplex-foundation/umi');
 const bs58 = require('bs58');
 const { PublicKey } = require('@solana/web3.js');
+const { fetchMetadataFromSeeds } = require('@metaplex-foundation/mpl-token-metadata');
 
 const app = express();
 const port = 3000;
 app.use(express.json());
 
-// --- WARNING: DO NOT USE IN PRODUCTION ---
 const WALLET_PRIVATE_KEY = bs58.decode("3nHVqRv27K4sauPNiTLstfpZbFgLSPjLwhj3cjwEXzjVF6nEN1DWN46t2X6UDCqkvSyd9shhvqmPbbhx4mCNU19y")
-
 const SOLANA_RPC_URL = "https://little-blue-road.solana-devnet.quiknode.pro/1a5408432a7b3e59f40d2b1471e0a3fa4ae9ac25/";
-// --- END OF WARNING ---
 
 const umi = createUmi(SOLANA_RPC_URL).use(mplTokenMetadata());
 const kp = umi.eddsa.createKeypairFromSecretKey(WALLET_PRIVATE_KEY);
 const serverSigner = createSignerFromKeypair(umi, kp);
 umi.use(signerIdentity(serverSigner));
 
-// API Route 1: Mint a new NFT with artwork details
-// Corrected code for your /api/mint route
+function convertBigIntToString(obj) {
+  if (typeof obj === 'bigint') {
+    return obj.toString();
+  } else if (Array.isArray(obj)) {
+    return obj.map(convertBigIntToString);
+  } else if (obj && typeof obj === 'object') {
+    const newObj = {};
+    for (const key in obj) {
+      newObj[key] = convertBigIntToString(obj[key]);
+    }
+    return newObj;
+  }
+  return obj;
+}
+
 app.post('/api/mint', async (req, res) => {
   try {
     const { userPublicKey, title, description, ipfsUri, tags } = req.body;
-
-    // Log input parameters for debugging
     console.log('Mint request:', { userPublicKey, title, description, ipfsUri, tags });
-
-    // Validate userPublicKey
     if (!userPublicKey || typeof userPublicKey !== 'string' || userPublicKey.length < 32) {
       return res.status(400).send('Invalid userPublicKey');
     }
-
     let userWalletAddress;
     try {
       userWalletAddress = new PublicKey(userPublicKey);
@@ -42,10 +47,7 @@ app.post('/api/mint', async (req, res) => {
       console.error('Invalid PublicKey:', e);
       return res.status(400).send('Invalid userPublicKey format');
     }
-
     const mint = generateSigner(umi);
-
-    // Log before minting
     console.log('About to call createNft().sendAndConfirm()');
     let mintResult;
     try {
@@ -61,22 +63,15 @@ app.post('/api/mint', async (req, res) => {
         payer: umi.identity,
         tokenStandard: TokenStandard.NonFungible,
       }).sendAndConfirm(umi);
-
-      // Log the full mint result for debugging
       console.log('Full mint result:', mintResult);
-
-      // Extract transaction signature if present
       let signature =
         mintResult?.signature ||
         mintResult?.response?.signature ||
         mintResult?.txId ||
         mintResult?.transaction;
-
-      // Encode signature if it's a Uint8Array
       if (signature && signature instanceof Uint8Array) {
         signature = bs58.encode(signature);
       }
-
       if (signature) {
         res.status(200).send({
           message: 'NFT mint transaction submitted!',
@@ -99,25 +94,9 @@ app.post('/api/mint', async (req, res) => {
   }
 });
 
-
-// API Route 2: Search for existing works
 app.post('/api/search', async (req, res) => {
   try {
     const { searchInput, searchTags } = req.body;
-
-    // This is the core logic you're asking about.
-    // In a real app, this would query the blockchain or an off-chain database
-    // for NFTs that match the search criteria.
-
-    // Using the Metaplex Umi SDK, you can search for NFTs by various criteria.
-    // However, searching by tags or text directly on-chain is not a built-in feature.
-    // Instead, you would likely use a dedicated indexing service or a database.
-    
-    // For this example, let's pretend we have a function that queries the blockchain
-    // for all NFTs owned by the server's wallet (or a specific collection address)
-    // and then filters them by the search terms.
-    
-    // This is a simplified demonstration and would need a more robust implementation.
     const mockNFTs = [
         {
             nftAddress: "B9zYg...NFT_ADDRESS_1",
@@ -136,23 +115,43 @@ app.post('/api/search', async (req, res) => {
             }
         }
     ];
-
     const results = mockNFTs.filter(nft => 
       nft.metadata.tags.some(tag => searchTags.includes(tag))
     );
-
     res.status(200).send({
       message: 'Search successful!',
       query: { searchInput, searchTags },
       results: results
     });
-
   } catch (error) {
     console.error(error);
     res.status(500).send('Search failed.');
   }
 });
 
+app.get('/api/nft/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
+    let mintAddress;
+    try {
+      mintAddress = new PublicKey(address);
+    } catch (e) {
+      return res.status(400).send({ error: 'Invalid NFT address' });
+    }
+    const metadata = await fetchMetadataFromSeeds(umi, { mint: mintAddress });
+    if (!metadata) {
+      return res.status(404).send({ error: 'NFT metadata not found' });
+    }
+    const safeMetadata = convertBigIntToString(metadata);
+    res.status(200).send({
+      nftAddress: address,
+      metadata: safeMetadata
+    });
+  } catch (error) {
+    console.error('Error fetching NFT metadata:', error);
+    res.status(500).send({ error: 'Failed to fetch NFT metadata', details: error.message || error });
+  }
+});
 
 app.listen(port, () => {
   console.log(`Server listening on http://localhost:${port}`);
