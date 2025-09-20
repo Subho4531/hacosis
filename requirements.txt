@@ -1,0 +1,6 @@
+express
+@metaplex-foundation/umi-bundle-defaults
+@metaplex-foundation/mpl-token-metadata
+@metaplex-foundation/umi
+bs58
+@solana/web3.js
